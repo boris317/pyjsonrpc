@@ -1,0 +1,6 @@
+syntax: glob
+run/*
+Paste*
+env2.5/*
+build/*
+setuptools*

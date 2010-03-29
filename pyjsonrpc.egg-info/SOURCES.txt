@@ -1,0 +1,9 @@
+setup.cfg
+setup.py
+pyjsonrpc/__init__.py
+pyjsonrpc.egg-info/PKG-INFO
+pyjsonrpc.egg-info/SOURCES.txt
+pyjsonrpc.egg-info/dependency_links.txt
+pyjsonrpc.egg-info/entry_points.txt
+pyjsonrpc.egg-info/not-zip-safe
+pyjsonrpc.egg-info/top_level.txt
