@@ -1,4 +1,3 @@
-syntax: glob
 dist/*
 Paste*
 env2.5/*
