@@ -5,7 +5,7 @@ http://json-rpc.org/
 I am going to add onto the JSON-RPC proposed spec to support mixed positional
 and keyword args in the "params" key. I am not changing the spec but instead including
 an object structure that can be passed as the only positional argument in params. In this
-way i support "spec" and also add more intellenge to it.
+way i support "spec" and also add more intellengence to it.
 
 
 
@@ -26,29 +26,16 @@ Procedure Call with mixed positional and keyword parameters:
 '''
 import traceback
 from types import NoneType
-
+import inspect
 import simplejson as json
 
-class ServiceException(Exception):
-    code = None
-    def __init__(self, rpc, message):
-        self.message = message
-        self.rpc = rpc
-        
-    def __str__(self):
-        return self.message
+from pyjsonrpc.object_hook import ObjectHook, Transmittable, reconstructor
+from pyjsonrpc._exc import *
 
-class ServiceMethodNotFound(ServiceException):
-    code = -32601
-    def __init__(self, rpc):
-        ServiceException.__init__(self, rpc, "Service method '%s' not found." % rpc.method)
-        self.method_name = name
-        
-class JsonRpcDecodeError(ServiceException):
-    code = -32600
-    def __init__(self, rpc, message):
-        ServiceException.__init__(self, rpc, message)
-                        
+import logging
+log = logging.getLogger(__name__)
+
+
 def service_method(func):
     '''
     Decorate fucntions and methods to expose them as remote methods.
@@ -56,91 +43,146 @@ def service_method(func):
     func.is_service_method = True
     return func
 
-class JsonAsObject(object):
-    def __new__(cls, obj_dict):
-        if not cls.as_object in obj_dict:
-            return obj_dict
-        return super(JsonAsObject, cls).__new__(cls, obj_dict)
-    
-class RPCRequest(JsonAsObject):
-    as_object = '__rpcrequest__'
+
+class RPCRequest(Transmittable):
     version = "2.0"
-    def __init__(self, obj_dict):
-        
-        self.subspec = obj_dict.get('__subspec__')
-        self.id = obj_dict.get('id')
+    
+    @reconstructor(method="method", jsonrpc="version", params="params", 
+                   id="id", __subspec__="subspec", skip_null_keys=True)
+    def __init__(self, **kw):
+        Transmittable.__init__(self)
+        self.subspec = kw.get('__subspec__') or kw.get('subspec')
+        self.id = kw.get('id')
         self.type = 'request' if self.id else 'notification'
 
         try:
-            self.method  = obj_dict['method']
-            self.version = obj_dict['jsonrpc']
+            self.method  = kw['method']
+            self.version = kw['jsonrpc']
         except KeyError, e:
-            raise JsonRpcDecodeError(self, 'Missing required parameter "%s"' % e.args[0])
+            raise JSONRPCDecodeError('Missing required parameter "%s"' % e.args[0], rpc=self)
         
-        self.params = obj_dict.get('params')
+        self.params = kw.get('params')
         if not isinstance(self.params, (NoneType, dict, list)):
-            raise JsonRpcDecodeError(self,
-                'Invalid type "%s" for value of "params" keyword. Must be list or dict.' % type(self.params)
+            raise JSONRPCDecodeError(
+                'Invalid type "%s" for value of "params" keyword. Must be list or dict.' % type(self.params),
+                rpc=self
             )
-                
+                        
 class RemoteService(object):
-    
-    def __init__(self, service=None, show_stack_trace=False):
+    __namespaces = {}
+    def __init__(self, services=None, show_stack_trace=False):
         '''
-        RemoteService wraps our remote service namespace. Takes a json-rpc
+        ``RemoteService`` wraps our remote service namespace. Takes a json-rpc
         string and invokes the correct call to the underlying service namespace
         
         kw_args:
-           @service(None) - class or namespace that exposes remote methods. If service is None
-                      the namespace is assumed to be __main__.
+           @service(None) - class or namespace/list of namespaces that exposes remote methods. If service is None
+                            the namespace is assumed to be ``__main__``.
                       
            @show_stack_trace(False) - If True, when an exception occurs durring a remote method
                                        call send the stack trace to the client.
         '''
-        if not service:
-            import __main__ as service
-        self.service = service
+        
+        if not services:
+            import __main__ as services
+            
+        if not isinstance(services, list):
+            services = [services]
+            
+        for service in services:
+            #service namespaces can be classes, instances or modules
+            if inspect.ismodule(service):
+                self.__namespaces[service.__name__] = service                        
+            elif inspect.isclass(service):
+                self.__namespaces[service.__name__] = service()
+            elif hasattr(service, '__class__'):
+                self.__namespaces[service.__class__.__name__] = service
+            else:
+                raise ServiceException(None, 'Invalid service object')
+          
+        log.debug('Namespaces: %s', str(self.__namespaces))
         self.show_stack_trace = show_stack_trace
+        self.object_hook = ObjectHook({'RPCRequest': RPCRequest})
+     
+    def add_object_hook(self, name, handler):
+        self.object_hook.add_hook(name, handler)
         
     def handle(self, json_rpc_str):
+        """
+        Handle a service call and dispatch to the correct method.
+        """
         try:
-            rpc = json.loads(json_rpc_str, object_hook=RPCRequest)
+            rpc = json.loads(json_rpc_str, object_hook=self.object_hook)
         except ValueError, e:
             raise
-        except JsonRpcDecodeError, e:
+        except JSONRPCDecodeError, e:
             return self.error(e)
+        
+        log.debug('Request: %s\nVersion: %s\nSubspec: %s', rpc.id, rpc.version, rpc.subspec)
+        
         try:
-            return self.call_method(self.get_method(rpc), rpc)
+            result = self.call_method(self.get_method(rpc), rpc)
         except ServiceException, e:
-            self.error(e)
+            return self.error(e)
         except Exception, e:
             e.rpc = rpc
-            return self.error(e, self.show_stack_trace)            
-                        
+            return self.error(e, self.show_stack_trace)
+        else:            
+            if not rpc.id:#notification
+                return ''
+            response = self.__base_response(rpc)
+            response['result'] = result
+            return response
+                                    
     def error(self, e, stack_trace=False):
-        error = self.__base_response(e.rpc)
+        
+        if getattr(e, 'rpc', None):
+            error = self.__base_response(e.rpc)
+            if e.rpc.subspec:
+                error['__subspec__'] = e.rpc.subspec
+        else: error = {}
+        
         error['error'] = e.message
         error['code'] = getattr(e, 'code', None) or -32000
-        
-        if e.rpc.subspec:
-            error['__subspec__'] = e.rpc.subspec
-            
+                    
         if stack_trace:            
             error['data'] = traceback.format_exc()
             
         return error
         
-    def get_method(self, rpc):
-        _method = getattr(self.service, rpc.method)
-        if not _method or not getattr(_method, 'is_service_method', None):
+    def get_method(self, rpc):        
+        
+        if '.' in rpc.method:
+            try:
+                namespace, method_name = rpc.method.split('.')
+            except ValueError, e:
+                raise ServiceMethodNotFound(rpc)
+        else:
+            namespace = '__main__'
+            method_name = rpc.method
+            
+        log.debug('Getting method "%s" from namespace "%s".', method_name, namespace)
+        if not namespace in self.__namespaces:
+            log.debug('No such namespace: %s', namespace)
             raise ServiceMethodNotFound(rpc)
+        
+        _method = getattr(self.__namespaces[namespace], method_name, None)
+        if not _method or not hasattr(_method, 'is_service_method'):
+            log.debug('No such method "%s" in namespace "%s"', method_name, namespace)
+            raise ServiceMethodNotFound(rpc)
+        
+        log.debug('Method found: %s', method_name)        
         return _method
     
     def call_method(self, _method, rpc):
+        log.debug('Calling method: %s', rpc.method)
+        
         if not rpc.params:
             return _method()
+        
         if isinstance(rpc.params, list):
             return _method(*rpc.params)
+        
         if isinstance(rpc.params, dict):
             if rpc.subspec == "1a":
                 if '__args__' in rpc.params and '__kwargs__' in rpc.params:
@@ -150,7 +192,7 @@ class RemoteService(object):
                 if '__kwargs__' in rpc.params:
                     return _method(**self.__strify_keys(rpc.params['__kwargs__']))
             return _method(**self.__strify_keys(rpc.params))
-        
+                            
     def __base_response(self, rpc):
         resp = {'jsonrpc': rpc.version}
         if rpc.id:

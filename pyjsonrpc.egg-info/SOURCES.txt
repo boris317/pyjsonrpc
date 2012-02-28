@@ -1,9 +1,16 @@
 setup.cfg
 setup.py
 pyjsonrpc/__init__.py
+pyjsonrpc/_exc.py
+pyjsonrpc/handlers.py
+pyjsonrpc/json.py
+pyjsonrpc/object_hook.py
+pyjsonrpc/proxy.py
+pyjsonrpc/service.py
 pyjsonrpc.egg-info/PKG-INFO
 pyjsonrpc.egg-info/SOURCES.txt
 pyjsonrpc.egg-info/dependency_links.txt
 pyjsonrpc.egg-info/entry_points.txt
 pyjsonrpc.egg-info/not-zip-safe
+pyjsonrpc.egg-info/requires.txt
 pyjsonrpc.egg-info/top_level.txt

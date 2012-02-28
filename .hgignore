@@ -1,6 +1,9 @@
 syntax: glob
 run/*
+dist/*
 Paste*
 env2.5/*
 build/*
 setuptools*
+*.egg-info
+*.pyc
