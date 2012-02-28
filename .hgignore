@@ -1,5 +1,4 @@
 syntax: glob
-run/*
 dist/*
 Paste*
 env2.5/*

@@ -1,0 +1,9 @@
+Namespaces: {'TestService': <__main__.TestService object at 0xb795d5ac>}
+Serving remote service: koan14.goldenware.com:9288
+Request: 76483
+Version: 2.0
+Subspec: 1a
+Getting method "divide" from namespace "TestService".
+Method found: divide
+Calling method: TestService.divide
+koan14.goldenware.com - - [17/May/2010 20:44:20] "POST / HTTP/1.1" 200 46
